@@ -10,14 +10,12 @@ InterfaceTable* ft;
 struct PV_PolyFreqWarp : PV_Unit
 {
     int mNumBins;
-    float* mPrevious;
     float* mPhaseReal;
     float* mPhaseImag;
 };
 
 static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
 {
-    RTFree(unit->mWorld, unit->mPrevious);
     RTFree(unit->mWorld, unit->mPhaseReal);
     RTFree(unit->mWorld, unit->mPhaseImag);
 }
@@ -28,18 +26,16 @@ static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
         return true;
 
     PolyFreqWarpFree(unit);
-    unit->mPrevious = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
     unit->mPhaseReal = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
     unit->mPhaseImag = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
 
-    if (!unit->mPrevious || !unit->mPhaseReal || !unit->mPhaseImag)
+    if (!unit->mPhaseReal || !unit->mPhaseImag)
     {
         PolyFreqWarpFree(unit);
         unit->mNumBins = 0;
         return false;
     }
 
-    std::memset(unit->mPrevious, 0, numBins * sizeof(float));
     for (int i = 0; i < numBins; ++i)
     {
         unit->mPhaseReal[i] = 1.f;
@@ -86,7 +82,7 @@ static void PolyFreqWarpAdd(SCComplex* output, int numBins, float position, floa
     }
 }
 
-static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output, float* previous,
+static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output,
                                        float* phaseReal, float* phaseImag, const float* magnitudes,
                                        int numBins, const float* params, float normShift,
                                        bool reflect, float overlap)
@@ -168,7 +164,6 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
             PolyFreqWarpAdd(output, numBins, destination, outReal, outImag);
             phaseReal[i] = rotateReal;
             phaseImag[i] = rotateImag;
-            previous[i] = sourceReal * sourceReal + sourceImag * sourceImag;
         }
         regionStart = regionEnd;
         peak = nextPeak;
@@ -279,7 +274,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
 
     // Process the channel
     
-    PolyFreqWarpProcessChannel(input, output, unit->mPrevious, unit->mPhaseReal,
+    PolyFreqWarpProcessChannel(input, output, unit->mPhaseReal,
                                unit->mPhaseImag, magnitudes, numBins, params, normShift,
                                reflect, overlap);
 
@@ -296,7 +291,6 @@ static void PV_PolyFreqWarp_Ctor(PV_PolyFreqWarp* unit)
     SETCALC(PolyFreqWarpNext);
     ZOUT0(0) = ZIN0(0);
     unit->mNumBins = 0;
-    unit->mPrevious = nullptr;
     unit->mPhaseReal = nullptr;
     unit->mPhaseImag = nullptr;
 }
