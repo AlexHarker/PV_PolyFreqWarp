@@ -9,22 +9,16 @@ InterfaceTable* ft;
 struct PV_PolyFreqWarp : PV_Unit
 {
     int mNumBins;
-    float* mPreviousLeft;
-    float* mPreviousRight;
-    float* mPhaseRealLeft;
-    float* mPhaseImagLeft;
-    float* mPhaseRealRight;
-    float* mPhaseImagRight;
+    float* mPrevious;
+    float* mPhaseReal;
+    float* mPhaseImag;
 };
 
 static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
 {
-    RTFree(unit->mWorld, unit->mPreviousLeft);
-    RTFree(unit->mWorld, unit->mPreviousRight);
-    RTFree(unit->mWorld, unit->mPhaseRealLeft);
-    RTFree(unit->mWorld, unit->mPhaseImagLeft);
-    RTFree(unit->mWorld, unit->mPhaseRealRight);
-    RTFree(unit->mWorld, unit->mPhaseImagRight);
+    RTFree(unit->mWorld, unit->mPrevious);
+    RTFree(unit->mWorld, unit->mPhaseReal);
+    RTFree(unit->mWorld, unit->mPhaseImag);
 }
 
 static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
@@ -33,29 +27,22 @@ static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
         return true;
 
     PolyFreqWarpFree(unit);
-    unit->mPreviousLeft = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPreviousRight = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPhaseRealLeft = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPhaseImagLeft = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPhaseRealRight = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPhaseImagRight = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
+    unit->mPrevious = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
+    unit->mPhaseReal = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
+    unit->mPhaseImag = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
 
-    if (!unit->mPreviousLeft || !unit->mPreviousRight || !unit->mPhaseRealLeft ||
-        !unit->mPhaseImagLeft || !unit->mPhaseRealRight || !unit->mPhaseImagRight)
+    if (!unit->mPrevious || !unit->mPhaseReal || !unit->mPhaseImag)
     {
         PolyFreqWarpFree(unit);
         unit->mNumBins = 0;
         return false;
     }
 
-    std::memset(unit->mPreviousLeft, 0, numBins * sizeof(float));
-    std::memset(unit->mPreviousRight, 0, numBins * sizeof(float));
+    std::memset(unit->mPrevious, 0, numBins * sizeof(float));
     for (int i = 0; i < numBins; ++i)
     {
-        unit->mPhaseRealLeft[i] = 1.f;
-        unit->mPhaseRealRight[i] = 1.f;
-        unit->mPhaseImagLeft[i] = 0.f;
-        unit->mPhaseImagRight[i] = 0.f;
+        unit->mPhaseReal[i] = 1.f;
+        unit->mPhaseImag[i] = 0.f;
     }
     unit->mNumBins = numBins;
     return true;
@@ -65,19 +52,15 @@ static int PolyFreqWarpPeak(const float* magnitudes, int numBins, int start)
 {
     for (int i = start; i < numBins; ++i)
     {
-        const float left = i ? magnitudes[i - 1] : magnitudes[i];
-        const float right = i + 1 < numBins ? magnitudes[i + 1] : magnitudes[i];
-        if (magnitudes[i] >= left && magnitudes[i] >= right && magnitudes[i] > 0.f)
+        if (magnitudes[i] > magnitudes[i - 1] && magnitudes[i] > magnitudes[i - 2] &&
+            magnitudes[i] > magnitudes[i + 1] && magnitudes[i] > magnitudes[i + 2])
             return i;
     }
     return numBins - 1;
 }
 
-static float PolyFreqWarpPeakPosition(const float* magnitudes, int numBins, int peak)
+static float PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 {
-    if (peak <= 0 || peak + 1 >= numBins)
-        return static_cast<float>(peak);
-
     const float left = std::log(std::max(magnitudes[peak - 1], 1.0e-20f));
     const float centre = std::log(std::max(magnitudes[peak], 1.0e-20f));
     const float right = std::log(std::max(magnitudes[peak + 1], 1.0e-20f));
@@ -105,9 +88,9 @@ static void PolyFreqWarpAdd(SCComplex* output, int numBins, float position, floa
 static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output, float* previous,
                                        float* phaseReal, float* phaseImag, const float* magnitudes,
                                        int numBins, const float* params, float normShift,
-                                       bool reflect)
+                                       bool reflect, float overlap)
 {
-    const float binRadians = 2.f * static_cast<float>(M_PI) / (2.f * (numBins - 1));
+    const float constMultVal = 2.f * static_cast<float>(M_PI) / overlap;
 
     for (int i = 0; i < numBins; ++i)
     {
@@ -125,16 +108,19 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
         if (regionEnd <= regionStart)
             regionEnd = regionStart + 1;
 
-        const float peakPosition = PolyFreqWarpPeakPosition(magnitudes, numBins, peak);
+        const float peakPosition = PolyFreqWarpPeakPosition(magnitudes, peak);
         const float normalizedPeak = peakPosition / static_cast<float>(numBins - 1);
         const float peakPolynomial = params[4] + 10000.f * normalizedPeak *
             (params[3] + normalizedPeak *
             (params[2] + normalizedPeak * (params[1] + normalizedPeak * params[0])));
         const float shift = peakPosition * peakPolynomial + normShift - peakPosition;
-        const float mappedPeak = peakPosition + shift;
-        const float phase = mappedPeak * binRadians;
-        const float rotateReal = std::cos(phase) * phaseReal[peak] - std::sin(phase) * phaseImag[peak];
-        const float rotateImag = std::sin(phase) * phaseReal[peak] + std::cos(phase) * phaseImag[peak];
+
+        const float phaseAngle = shift * constMultVal;
+        const float tempReal = std::cos(phaseAngle);
+        const float tempImag = std::sin(phaseAngle);
+
+        const float rotateReal = tempReal * phaseReal[peak] - tempImag * phaseImag[peak];
+        const float rotateImag = tempReal * phaseImag[peak] + tempImag * phaseReal[peak];
 
         for (int i = regionStart; i < regionEnd; ++i)
         {
@@ -143,15 +129,30 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
             const float real = sourceReal * rotateReal - sourceImag * rotateImag;
             const float imag = sourceReal * rotateImag + sourceImag * rotateReal;
             float destination = static_cast<float>(i) + shift;
+            bool conjugate = false;
 
             if (reflect)
             {
-                float wrapped = std::fmod(std::fabs(destination), 2.f * (numBins - 1));
-                if (wrapped > numBins - 1)
-                    wrapped = 2.f * (numBins - 1) - wrapped;
-                destination = wrapped;
+                if (destination < 0.f)
+                {
+                    destination = -destination;
+                    conjugate = !conjugate;
+                }
+                if (destination > static_cast<float>(numBins - 1))
+                {
+                    float twoN = 2.f * static_cast<float>(numBins - 1);
+                    float wrapped = std::fmod(destination, twoN);
+                    if (wrapped > static_cast<float>(numBins - 1))
+                    {
+                        wrapped = twoN - wrapped;
+                        conjugate = !conjugate;
+                    }
+                    destination = wrapped;
+                }
             }
-            PolyFreqWarpAdd(output, numBins, destination, real, imag);
+            float outReal = real;
+            float outImag = conjugate ? -imag : imag;
+            PolyFreqWarpAdd(output, numBins, destination, outReal, outImag);
             phaseReal[i] = rotateReal;
             phaseImag[i] = rotateImag;
             previous[i] = sourceReal * sourceReal + sourceImag * sourceImag;
@@ -160,11 +161,35 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
     }
 }
 
-static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int inNumSamples)
+static inline SndBuf* GetSndBuf(Unit* unit, float fbufnum)
 {
-    PV_GET_BUF2
-    (void)inNumSamples;
-    if (!buf1 || !buf2 || buf1->samples != buf2->samples)
+    if (fbufnum < 0.f)
+        return nullptr;
+
+    uint32 ibufnum = (uint32)fbufnum;
+    World* world = unit->mWorld;
+    SndBuf* buf;
+
+    if (ibufnum >= world->mNumSndBufs)
+    {
+        int localBufNum = ibufnum - world->mNumSndBufs;
+        Graph* parent = unit->mParent;
+        if (localBufNum <= parent->localBufNum)
+            buf = parent->mLocalSndBufs + localBufNum;
+        else
+            buf = world->mSndBufs;
+    }
+    else
+        buf = world->mSndBufs + ibufnum;
+    
+    return buf;
+}
+
+static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
+{
+    PV_GET_BUF
+
+    if (!buf)
         return;
 
     // `numbins` from the SC macro covers only bins other than DC/Nyquist. 
@@ -176,105 +201,90 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int inNumSamples)
         return;
 
     float params[6];
-    params[0] = ZIN0(2);
-    params[1] = ZIN0(3);
-    params[2] = ZIN0(4);
-    params[3] = ZIN0(5);
-    params[4] = ZIN0(6);
-    params[5] = ZIN0(7);
+    params[0] = ZIN0(1);
+    params[1] = ZIN0(2);
+    params[2] = ZIN0(3);
+    params[3] = ZIN0(4);
+    params[4] = ZIN0(5);
+    params[5] = ZIN0(6);
 
-    const float link = ZIN0(8);
-    const bool reflect = ZIN0(9) != 0.f;
-    const float normShift = params[5] * numBins;
+    const bool reflect = ZIN0(7) != 0.f;
+    const float fdetector = ZIN0(8);
+    const float foverlap = ZIN0(9);
+    const float overlap = foverlap > 0.f ? foverlap : 4.f;
 
-    SCComplexBuf* left = ToComplexApx(buf1);
-    SCComplexBuf* right = ToComplexApx(buf2);
-
-    float* leftMagnitudes = static_cast<float*>(alloca(numBins * sizeof(float)));
-    float* rightMagnitudes = static_cast<float*>(alloca(numBins * sizeof(float)));
-    
-    leftMagnitudes[0] = link ? left->dc : left->dc + right->dc;
-    rightMagnitudes[0] = link ? right->dc : left->dc + right->dc;
-
-    for (int i = 0; i < numBins - 2; ++i)
+    SndBuf* detBuf = buf;
+    if (fdetector >= 0.f)
     {
-        const float leftReal = left->bin[i].real;
-        const float rightReal = right->bin[i].real;
-        const float leftImag = left->bin[i].imag;
-        const float rightImag = right->bin[i].imag;
-        if (link)
+        SndBuf* b = GetSndBuf(unit, fdetector);
+        if (b && b->data && b->samples == buf->samples)
         {
-            leftMagnitudes[i + 1] = rightMagnitudes[i + 1] =
-                (leftReal + rightReal) * (leftReal + rightReal) +
-                (leftImag + rightImag) * (leftImag + rightImag);
-        }
-        else
-        {
-            leftMagnitudes[i + 1] = leftReal * leftReal + leftImag * leftImag;
-            rightMagnitudes[i + 1] = rightReal * rightReal + rightImag * rightImag;
+            detBuf = b;
         }
     }
 
-    leftMagnitudes[numBins - 1] = link ? left->nyq : left->nyq + right->nyq;
-    rightMagnitudes[numBins - 1] = link ? right->nyq : left->nyq + right->nyq;
+    const float normShift = params[5] * numBins;
+
+    SCComplexBuf* mainComplex = ToComplexApx(buf);
+    SCComplexBuf* detComplex = ToComplexApx(detBuf);
+
+    const int padding = 4;
+    float* paddedMagnitudes = static_cast<float*>(alloca((numBins + 2 * padding) * sizeof(float)));
+    float* magnitudes = paddedMagnitudes + padding;
+
+    magnitudes[0] = detComplex->dc * detComplex->dc;
+    for (int i = 0; i < numBins - 2; ++i)
+    {
+        const float r = detComplex->bin[i].real;
+        const float im = detComplex->bin[i].imag;
+        magnitudes[i + 1] = r * r + im * im;
+    }
+    magnitudes[numBins - 1] = detComplex->nyq * detComplex->nyq;
+
+    for (int j = 1; j <= padding; ++j)
+    {
+        magnitudes[-j] = magnitudes[j];
+        magnitudes[numBins - 1 + j] = magnitudes[numBins - 1 - j];
+    }
 
     // Make temporary arrays for the inputs/outputs
 
-    SCComplex* leftInput = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
-    SCComplex* rightInput = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
-    SCComplex* leftOutput = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
-    SCComplex* rightOutput = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
+    SCComplex* input = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
+    SCComplex* output = static_cast<SCComplex*>(alloca(numBins * sizeof(SCComplex)));
 
-    // Copy the input bins to the leftInput and rightInput arrays for processing.
+    // Copy input from the main complex buffer to the temporary input array
 
-    leftInput[0].real = left->dc;
-    leftInput[0].imag = 0.f;
-    rightInput[0].real = right->dc;
-    rightInput[0].imag = 0.f;
+    input[0].real = mainComplex->dc;
+    input[0].imag = 0.f;
 
     for (int i = 0; i < numBins - 2; ++i)
-    {
-        leftInput[i + 1] = left->bin[i];
-        rightInput[i + 1] = right->bin[i];
-    }
+        input[i + 1] = mainComplex->bin[i];
 
-    leftInput[numBins - 1].real = left->nyq;
-    leftInput[numBins - 1].imag = 0.f;
-    rightInput[numBins - 1].real = right->nyq;
-    rightInput[numBins - 1].imag = 0.f;
+    input[numBins - 1].real = mainComplex->nyq;
+    input[numBins - 1].imag = 0.f;
 
-    PolyFreqWarpProcessChannel(leftInput, leftOutput, unit->mPreviousLeft, unit->mPhaseRealLeft,
-                               unit->mPhaseImagLeft, leftMagnitudes, numBins, params, normShift,
-                               reflect);
-    PolyFreqWarpProcessChannel(rightInput, rightOutput, unit->mPreviousRight, unit->mPhaseRealRight,
-                               unit->mPhaseImagRight, rightMagnitudes, numBins, params, normShift,
-                               reflect);
+    // Process the channel
+    
+    PolyFreqWarpProcessChannel(input, output, unit->mPrevious, unit->mPhaseReal,
+                               unit->mPhaseImag, magnitudes, numBins, params, normShift,
+                               reflect, overlap);
 
-    left->dc = leftOutput[0].real;
-    right->dc = rightOutput[0].real;
+    // Copy output back to the main complex buffer
 
+    mainComplex->dc = output[0].real;
     for (int i = 0; i < numBins - 2; ++i)
-    {
-        left->bin[i] = leftOutput[i + 1];
-        right->bin[i] = rightOutput[i + 1];
-    }
-
-    left->nyq = leftOutput[numBins - 1].real;
-    right->nyq = rightOutput[numBins - 1].real;
+        mainComplex->bin[i] = output[i + 1];
+    mainComplex->nyq = output[numBins - 1].real;
 }
 
 static void PV_PolyFreqWarp_Ctor(PV_PolyFreqWarp* unit)
 {
     SETCALC(PolyFreqWarpNext);
     ZOUT0(0) = ZIN0(0);
-    ZOUT0(1) = ZIN0(1);
     unit->mNumBins = 0;
-    unit->mPreviousLeft = nullptr;
-    unit->mPreviousRight = nullptr;
-    unit->mPhaseRealLeft = nullptr;
-    unit->mPhaseImagLeft = nullptr;
-    unit->mPhaseRealRight = nullptr;
-    unit->mPhaseImagRight = nullptr;
+    unit->mPrevious = nullptr;
+    unit->mPhaseReal = nullptr;
+    unit->mPhaseImag = nullptr;
 }
 
 static void PV_PolyFreqWarp_Dtor(PV_PolyFreqWarp* unit)
