@@ -18,9 +18,9 @@ s.waitForBoot {
             rightFFT = FFT(LocalBuf(4096), source[1], hop: 0.25, wintype: 1);
 
             trigger = Impulse.kr(2);
-            curve0 = 0.0;//TRand.kr(-0.0000002, 0.0000002, trigger);
-            curve1 = 0.0;//TRand.kr(-0.000002, 0.000002, trigger);
-            curve2 = 0.0001;//TRand.kr(-0.00002, 0.00002, trigger);
+            curve0 = 0.1;//TRand.kr(-0.0000002, 0.0000002, trigger);
+            curve1 = 0.01;//TRand.kr(-0.000002, 0.000002, trigger);
+            curve2 = 0.001;//TRand.kr(-0.00002, 0.00002, trigger);
             curve3 = 0.0001;//TRand.kr(-0.0002, 0.0002, trigger);
             scale = 1;//TRand.kr(0.998, 1.002, trigger);
             shift = 0.001;
