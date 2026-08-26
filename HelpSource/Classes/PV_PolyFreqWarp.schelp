@@ -39,7 +39,7 @@ ARGUMENT:: detector
 Optional FFT buffer used for peak and magnitude detection instead of code::buffer::. Pass code::nil:: (or omit) to use code::buffer:: itself. When processing multichannel signals (e.g. stereo), a shared detector chain (such as the FFT of a summed or linked mix) can be passed to all channel instances. This ensures identical peak detection and spectral region boundaries across channels, maintaining inter-channel phase coherence and stereo imaging.
 
 ARGUMENT:: overlap
-FFT overlap factor (e.g., 4 for hop ratio 0.25). Default is 4.
+FFT overlap factor (e.g., 4 for hop ratio 0.25). Default is 4. Below 4 is liable to have significant amplitude modulation.
 
 returns:: The processed FFT chain.
 
