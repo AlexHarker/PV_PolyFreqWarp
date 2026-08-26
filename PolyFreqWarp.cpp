@@ -1,6 +1,7 @@
 #include "SC_PlugIn.h"
 #include "FFT_UGens.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -56,7 +57,7 @@ static int PolyFreqWarpPeak(const float* magnitudes, int numBins, int start)
             magnitudes[i] > magnitudes[i + 1] && magnitudes[i] > magnitudes[i + 2])
             return i;
     }
-    return numBins - 1;
+    return -1;
 }
 
 static float PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
@@ -99,14 +100,26 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
     }
 
     int regionStart = 0;
+    int peak = PolyFreqWarpPeak(magnitudes, numBins, 0);
+    if (peak == -1)
+        peak = 0;
+
     while (regionStart < numBins)
     {
-        const int peak = PolyFreqWarpPeak(magnitudes, numBins, regionStart);
-        int regionEnd = peak + 1;
-        while (regionEnd < numBins && magnitudes[regionEnd] <= magnitudes[regionEnd - 1])
-            ++regionEnd;
-        if (regionEnd <= regionStart)
-            regionEnd = regionStart + 1;
+        int nextPeak = (peak < numBins - 1) ? PolyFreqWarpPeak(magnitudes, numBins, peak + 1) : -1;
+        int regionEnd;
+
+        if (nextPeak != -1)
+        {
+            auto minIt = std::min_element(magnitudes + peak, magnitudes + nextPeak + 1);
+            regionEnd = static_cast<int>(std::distance(magnitudes, minIt));
+            if (regionEnd <= regionStart)
+                regionEnd = regionStart + 1;
+        }
+        else
+        {
+            regionEnd = numBins;
+        }
 
         const float peakPosition = PolyFreqWarpPeakPosition(magnitudes, peak);
         const float normalizedPeak = peakPosition / static_cast<float>(numBins - 1);
@@ -158,6 +171,7 @@ static void PolyFreqWarpProcessChannel(const SCComplex* input, SCComplex* output
             previous[i] = sourceReal * sourceReal + sourceImag * sourceImag;
         }
         regionStart = regionEnd;
+        peak = nextPeak;
     }
 }
 
