@@ -39,15 +39,11 @@ set_target_properties(PolyFreqWarp PROPERTIES
     SUFFIX ".scx"
 )
 
-include(GNUInstallDirs)
-
 if(APPLE AND NOT DEFINED SUPERCOLLIDER_EXTENSION_ROOT)
-    set(SUPERCOLLIDER_EXTENSION_ROOT "$ENV{HOME}/Library/Application Support" CACHE PATH
+    set(SUPERCOLLIDER_EXTENSION_ROOT "$ENV{HOME}/Library/Application Support/SuperCollider/Extensions/PV_PolyFreqWarp" CACHE PATH
         "Install path prefix, prepended onto install directories." FORCE)
 endif()
 
-set(SUPERCOLLIDER_EXTENSION_ROOT "SuperCollider/Extensions/Warper"
-    CACHE PATH "Install destination for this SuperCollider extension package")
 set(SUPERCOLLIDER_PLUGIN_DIR "${SUPERCOLLIDER_EXTENSION_ROOT}/plugins"
     CACHE PATH "Install destination for SuperCollider plugins")
 set(SUPERCOLLIDER_EXTENSION_DIR "${SUPERCOLLIDER_EXTENSION_ROOT}/classes"
