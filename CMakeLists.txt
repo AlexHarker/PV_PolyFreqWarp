@@ -52,6 +52,8 @@ set(SUPERCOLLIDER_PLUGIN_DIR "${SUPERCOLLIDER_EXTENSION_ROOT}/plugins"
     CACHE PATH "Install destination for SuperCollider plugins")
 set(SUPERCOLLIDER_EXTENSION_DIR "${SUPERCOLLIDER_EXTENSION_ROOT}/classes"
     CACHE PATH "Install destination for SuperCollider class files")
+set(SUPERCOLLIDER_HELP_DIR "${SUPERCOLLIDER_EXTENSION_ROOT}/HelpSource/Classes"
+    CACHE PATH "Install destination for SuperCollider help files")
 
 install(TARGETS PolyFreqWarp
     LIBRARY DESTINATION "${SUPERCOLLIDER_PLUGIN_DIR}"
@@ -60,4 +62,8 @@ install(TARGETS PolyFreqWarp
 
 install(FILES PolyFreqWarp.sc
     DESTINATION "${SUPERCOLLIDER_EXTENSION_DIR}"
+)
+
+install(FILES HelpSource/Classes/PV_PolyFreqWarp.schelp
+    DESTINATION "${SUPERCOLLIDER_HELP_DIR}"
 )

@@ -1,0 +1,72 @@
+TITLE:: PV_PolyFreqWarp
+summary:: Polynomial frequency warping of spectral data
+categories:: UGens>FFT
+
+DESCRIPTION::
+PV_PolyFreqWarp applies polynomial frequency warping to an incoming FFT spectrum. Spectral peaks are detected and tracked across frames to maintain phase coherence during transformation.
+
+
+CLASSMETHODS::
+
+METHOD:: new
+Apply polynomial frequency warping to an FFT buffer.
+
+ARGUMENT:: buffer
+The input FFT buffer (e.g., produced by link::Classes/FFT::).
+
+ARGUMENT:: curve0
+Polynomial coefficient for 5th order warping term.
+
+ARGUMENT:: curve1
+Polynomial coefficient for 4th order warping term.
+
+ARGUMENT:: curve2
+Polynomial coefficient for 3rd order warping term.
+
+ARGUMENT:: curve3
+Polynomial coefficient for 2nd order warping term.
+
+ARGUMENT:: scale
+Linear frequency scaling factor (default 1.0). Scaling by a factor equates to pitch transposition (e.g. 2.0 transposes up one octave, 0.5 transposes down one octave, and 1.0 preserves original pitch).
+
+ARGUMENT:: shift
+Global frequency shift in normalized frequency units (where 1.0 corresponds to shifting across the entire spectrum up to the Nyquist frequency, and -1.0 shifts down by Nyquist; default is 0.0).
+
+ARGUMENT:: reflect
+Whether to reflect spectral components at DC and Nyquist (1 = reflect with phase conjugation, 0 = clip). Default is 1.
+
+ARGUMENT:: detector
+Optional FFT buffer used for peak and magnitude detection instead of code::buffer::. Pass code::nil:: (or omit) to use code::buffer:: itself. When processing multichannel signals (e.g. stereo), a shared detector chain (such as the FFT of a summed or linked mix) can be passed to all channel instances. This ensures identical peak detection and spectral region boundaries across channels, maintaining inter-channel phase coherence and stereo imaging.
+
+ARGUMENT:: overlap
+FFT overlap factor (e.g., 4 for hop ratio 0.25). Default is 4.
+
+returns:: The processed FFT chain.
+
+
+EXAMPLES::
+
+code::
+(
+s.waitForBoot {
+    b = Buffer.read(s, Platform.resourceDir +/+ "sounds/a11wlk01.wav");
+    s.sync;
+
+    x = {
+        var in, chain, sig;
+        in = PlayBuf.ar(1, b, BufRateScale.kr(b), loop: 1);
+        chain = FFT(LocalBuf(4096), in);
+        chain = PV_PolyFreqWarp(
+            buffer: chain,
+            scale: MouseX.kr(0.5, 2.0, \exponential),
+            shift: MouseY.kr(-0.5, 0.5)
+        );
+        sig = IFFT(chain);
+        sig ! 2 * 0.2;
+    }.play;
+};
+)
+
+x.free;
+b.free;
+::
