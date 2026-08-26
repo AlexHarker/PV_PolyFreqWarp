@@ -1,7 +1,5 @@
 (
-//var soundFile = Platform.resourceDir +/+ "sounds/a11wlk01.wav";
-var soundFile = "/Users/alexharker/Desktop/- EVERYTHING/- Audio Test Files/05 She Treats Me Well.wav";
-//var soundFile = "/Users/alexharker/Desktop/- EVERYTHING/- Audio Test Files/01 Old Pine.aif";
+var soundFile = Platform.resourceDir +/+ "sounds/a11wlk01.wav";
 var buffer;
 
 s.waitForBoot {
