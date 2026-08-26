@@ -12,9 +12,9 @@ PV_PolyFreqWarp : PV_ChainUGen {
         channels = Array.fill(2, { |index| OutputProxy(rate, this, index) });
         ^channels
     }
-
+    
     numOutputs {
-        ^channels.size
+        ^2
     }
 
     writeOutputSpecs { |file|
