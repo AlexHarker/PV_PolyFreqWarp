@@ -23,7 +23,8 @@ s.waitForBoot {
             scale = 1;//TRand.kr(0.998, 1.002, trigger);
             shift = 0.001;
 
-            // link = 0 and reflect = 1 stay fixed for this test.
+            // reflect = 1 stays fixed for this test.
+
             warped = PV_PolyFreqWarp(
 					[leftFFT, rightFFT],
                 curve0,
@@ -33,7 +34,7 @@ s.waitForBoot {
                 scale,
                 shift,
                 1,
-				PV_Add(leftFFT, rightFFT)
+				PV_Add(leftFFT, rightFFT) // Use linked detection
             );
 
             Out.ar(0, IFFT(warped));
