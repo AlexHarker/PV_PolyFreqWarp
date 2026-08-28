@@ -20,22 +20,22 @@ static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
     RTFree(unit->mWorld, unit->mPhaseImag);
 }
 
-// Ensure that the phase arrays are allocated and initialized for the given number of bins.
+// Ensure that the phase arrays are allocated and initialized for the given number of bins
 
 static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
 {
-    // If the number of bins is already correct, no need to reallocate.
+    // If the number of bins is already correct, no need to reallocate
 
     if (unit->mNumBins == numBins)
         return true;
 
-    // Free any existing phase arrays before allocating new ones.
+    // Free any existing phase arrays before allocating new ones
 
     PolyFreqWarpFree(unit);
     unit->mPhaseReal = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
     unit->mPhaseImag = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
 
-    // If allocation failed, free any allocated memory and return false.
+    // If allocation failed, free any allocated memory and return false
 
     if (!unit->mPhaseReal || !unit->mPhaseImag)
     {
@@ -44,7 +44,7 @@ static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
         return false;
     }
 
-    // Initialize the phase arrays to represent no rotation (real=1, imag=0).
+    // Initialize the phase arrays to represent no rotation (real=1, imag=0)
 
     for (int i = 0; i < numBins; ++i)
     {
@@ -70,7 +70,7 @@ static int PolyFreqWarpPeak(const float* magnitudes, int numBins, int start)
     return -1;
 }
 
-// Interpolate a peak position using a parabolic fit to the logarithm of the magnitudes.
+// Interpolate a peak position using a parabolic fit to the logarithm of the magnitudes
 
 static float PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 {
@@ -99,13 +99,25 @@ static void PolyFreqWarpAdd(SCComplex* output, int numBins, float position, floa
     }
 }
 
-static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output,
-                                float* phaseReal, float* phaseImag, 
-                                const float* magnitudes, int numBins, const float* params,
-                                bool reflect, float overlap)
+// Calculate the warped frequency position for a given peak position 
+
+static float PolyFreqWarpPolynomial(float peak, const float* p, float binShift, long numBins)
 {
-    const float constMultVal = 2.f * static_cast<float>(M_PI) / overlap;
+    const float pNorm = peak / static_cast<float>(numBins - 1);
+    const float polynomial = p[4] + 10000.f * pNorm * (p[3] + pNorm * (p[2] + pNorm * (p[1] + pNorm * p[0])));
+    
+    return peak * polynomial + binShift;
+}
+
+// Process the input and write to the output
+
+static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float* phaseReal, float* phaseImag, 
+                                const float* magnitudes, int numBins, const float* params, bool reflect, float overlap)
+{
+    const float phaseConst = 2.f * static_cast<float>(M_PI) / overlap;
     const float binShift = params[5] * (numBins - 1);
+
+    // Zero the output
 
     for (int i = 0; i < numBins; ++i)
     {
@@ -113,41 +125,48 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output,
         output[i].imag = 0.f;
     }
 
+    // Find the first peak
+
     int regionStart = 0;
     int peak = PolyFreqWarpPeak(magnitudes, numBins, 0);
     if (peak == -1)
         peak = 0;
 
+    // Process one region at a time, defined by the peaks in the magnitudes array
+
     while (regionStart < numBins)
     {
-        int nextPeak = (peak < numBins - 1) ? PolyFreqWarpPeak(magnitudes, numBins, peak + 1) : -1;
+        // Find the next peak after the current peak to aid in finding the region end
+
+        int nextPeak = PolyFreqWarpPeak(magnitudes, numBins, peak + 1);
         int regionEnd;
+
+        // Find the minimum magnitude between current peak and the next to define the end of the current region
 
         if (nextPeak != -1)
         {
             auto minIt = std::min_element(magnitudes + peak, magnitudes + nextPeak + 1);
-            regionEnd = static_cast<int>(std::distance(magnitudes, minIt));
-            if (regionEnd <= regionStart)
-                regionEnd = regionStart + 1;
+            regionEnd = static_cast<int>(std::distance(magnitudes, minIt)) + 1;
         }
         else
-        {
             regionEnd = numBins;
-        }
+
+        // Calculate the shift for this region based on the peak position and the polynomial
 
         const float peakPosition = PolyFreqWarpPeakPosition(magnitudes, peak);
-        const float normalizedPeak = peakPosition / static_cast<float>(numBins - 1);
-        const float peakPolynomial = params[4] + 10000.f * normalizedPeak *
-            (params[3] + normalizedPeak *
-            (params[2] + normalizedPeak * (params[1] + normalizedPeak * params[0])));
-        const float shift = peakPosition * peakPolynomial + binShift - peakPosition;
+        const float peakPolynomial = PolyFreqWarpPolynomial(peakPosition, params, binShift, numBins);
+        const float shift = peakPolynomial - peakPosition;
 
-        const float phaseAngle = shift * constMultVal;
+        // Calculate the rotation for this region based on the shift and the previous phase values
+
+        const float phaseAngle = shift * phaseConst;
         const float tempReal = std::cos(phaseAngle);
         const float tempImag = std::sin(phaseAngle);
 
         const float rotateReal = tempReal * phaseReal[peak] - tempImag * phaseImag[peak];
         const float rotateImag = tempReal * phaseImag[peak] + tempImag * phaseReal[peak];
+
+        // Shift this region and paste the the output
 
         for (int i = regionStart; i < regionEnd; ++i)
         {
@@ -183,16 +202,19 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output,
             phaseReal[i] = rotateReal;
             phaseImag[i] = rotateImag;
         }
+
+        // Update the region start and peak for the next iteration
+
         regionStart = regionEnd;
         peak = nextPeak;
     }
 }
 
-// Retrieve the SndBuf pointer from the unit and buffer number.
+// Retrieve the SndBuf pointer from the unit and buffer number
 
 static inline SndBuf* GetSndBuf(Unit* unit, float fbufnum)
 {
-    // If the buffer number is negative, return nullptr.
+    // If the buffer number is negative, return nullptr
 
     if (fbufnum < 0.f)
         return nullptr;
@@ -238,7 +260,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
  
     ZOUT0(0) = fmain; 
 
-    // Calculate the number of bins based on the input buffer.
+    // Calculate the number of bins based on the input buffer
 
     const int numBins = (buf->samples >> 1) + 1;
 
@@ -282,7 +304,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
     SCComplexBuf* mainComplex = ToComplexApx(buf);
     SCComplexBuf* detComplex = ToComplexApx(detBuf);
 
-    // Check that the buffers match in size
+    // Check that the buffers match in size.
 
     if (buf->samples != detBuf->samples)
         return;
@@ -294,7 +316,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
     float* paddedMagnitudes = static_cast<float*>(alloca((numBins + 2 * padding) * sizeof(float)));
     float* magnitudes = paddedMagnitudes + padding;
 
-    // Calculate the magnitudes of the complex bins for peak detection. 
+    // Calculate the magnitudes of the complex bins for peak detection.
 
     magnitudes[0] = detComplex->dc * detComplex->dc;
     for (int i = 0; i < numBins - 2; ++i)
@@ -305,7 +327,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
     }
     magnitudes[numBins - 1] = detComplex->nyq * detComplex->nyq;
 
-    // Fold the magnitudes at the edges to handle boundary conditions for peak detection.
+    // Fold the magnitudes at the edges to handle boundary conditions for peak detection
 
     for (int j = 1; j <= padding; ++j)
     {
