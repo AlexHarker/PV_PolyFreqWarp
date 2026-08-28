@@ -224,18 +224,29 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
 {
     // Get the main input buffer from the unit. If it is null, return early.
 
-    const float fmain = ZIN0(0);
+    const float fmain = ZIN0(0);                                                                                                         \
+
     SndBuf* buf = GetSndBuf(unit, fmain);
 
     if (!buf)
+    {
+        ZOUT0(0) = -1.f;
         return;
+    }
+
+    // Set the output to be the input buffer
+ 
+    ZOUT0(0) = fmain; 
 
     // Calculate the number of bins based on the input buffer.
 
     const int numBins = (buf->samples >> 1) + 1;
 
     if (numBins <= 0 || !PolyFreqWarpEnsureState(unit, numBins))
+    {
+        ZOUT0(0) = -1.f;
         return;
+    }
 
     // Read parameters from the input buffer. The first six parameters are polynomial coefficients,
     // followed by a boolean for reflection, a detector buffer index, and an overlap value.
@@ -263,6 +274,8 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
         if (b && b->data && b->samples == buf->samples)
             detBuf = b;
     }
+
+    LOCK_SNDBUF2(buf, detBuf);
 
     // Ensure that the buffers are in complex format. If not, convert them to complex format.
 
