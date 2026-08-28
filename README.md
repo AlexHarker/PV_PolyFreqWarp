@@ -8,7 +8,7 @@ The phase-locking algorithm and peak-based spectral region processing implemente
 
 > **Jean Laroche and Mark Dolson.**  
 > *"Improved Phase Vocoder Time-Scale Modification of Audio."*  
-> *IEEE Transactions on Speech and Audio Processing*, Vol. 7, No. 3, pp. 323–332, May 1999.  
+> *IEEE Transactions on Speech and Audio Processing*, Vol. 7, Issue 3, pp. 323–332, May 1999.  
 > DOI: [10.1109/89.759041](https://doi.org/10.1109/89.759041)
 
 ## Overview & Features
@@ -47,7 +47,7 @@ s.waitForBoot {
     x = {
         var in, chain, sig;
         in = PlayBuf.ar(1, b, BufRateScale.kr(b), loop: 1);
-        chain = FFT(LocalBuf(4096), in);
+        chain = FFT(LocalBuf(4096), in, hop: 0.25, wintype: 1);
         chain = PV_PolyFreqWarp(
             buffer: chain,
             scale: MouseX.kr(0.5, 2.0, \exponential), // Pitch transposition
@@ -59,7 +59,3 @@ s.waitForBoot {
 };
 )
 ```
-
-## License
-
-GPL-2.0-or-later
