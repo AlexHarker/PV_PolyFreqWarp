@@ -84,7 +84,10 @@ static float PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
     return static_cast<float>(peak) + 0.5f * (left - right) / divisor;
 }
 
-static void PolyFreqWarpAdd(SCComplex* output, int numBins, float position, float real, float imag)
+// Paste a single bin into the output array at a fractional position,
+// Distribute the value between the two nearest bins based on the fractional part of the position.
+
+static inline void PolyFreqWarpAdd(SCComplex* output, float position, float real, float imag, int numBins)
 {
     if (position < 0.f || position > static_cast<float>(numBins - 1))
         return;
@@ -99,9 +102,32 @@ static void PolyFreqWarpAdd(SCComplex* output, int numBins, float position, floa
     }
 }
 
+// Shift and paste a single bin
+
+static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* output, int bin, float destination, 
+                                        float rotateReal, float rotateImag, float* phaseReal, float* phaseImag, 
+                                        int numBins, bool conjugate)
+{
+    // Rotate the input bin by the given complex value
+
+    const float sourceReal = input[bin].real;
+    const float sourceImag = input[bin].imag;
+    const float real = sourceReal * rotateReal - sourceImag * rotateImag;
+    const float imag = sourceReal * rotateImag + sourceImag * rotateReal;
+    
+    // Add to the output
+
+    PolyFreqWarpAdd(output, numBins, destination, real, conjugate ? -imag : imag);
+ 
+    // Update the phase arrays for the next iteration
+    
+    phaseReal[bin] = rotateReal;
+    phaseImag[bin] = rotateImag;
+}
+
 // Calculate the warped frequency position for a given peak position 
 
-static float PolyFreqWarpPolynomial(float peak, const float* p, float binShift, long numBins)
+static inline float PolyFreqWarpPolynomial(float peak, const float* p, float binShift, int numBins)
 {
     const float pNorm = peak / static_cast<float>(numBins - 1);
     const float polynomial = p[4] + 10000.f * pNorm * (p[3] + pNorm * (p[2] + pNorm * (p[1] + pNorm * p[0])));
@@ -170,10 +196,6 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float
 
         for (int i = regionStart; i < regionEnd; ++i)
         {
-            const float sourceReal = input[i].real;
-            const float sourceImag = input[i].imag;
-            const float real = sourceReal * rotateReal - sourceImag * rotateImag;
-            const float imag = sourceReal * rotateImag + sourceImag * rotateReal;
             float destination = static_cast<float>(i) + shift;
             bool conjugate = false;
 
@@ -196,11 +218,10 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float
                     destination = wrapped;
                 }
             }
-            float outReal = real;
-            float outImag = conjugate ? -imag : imag;
-            PolyFreqWarpAdd(output, numBins, destination, outReal, outImag);
-            phaseReal[i] = rotateReal;
-            phaseImag[i] = rotateImag;
+
+            // Shift and paste a single bin
+
+            PolyFreqWarpShiftBin(input, output, i, destination, rotateReal, rotateImag ,phaseReal, phaseImag, numBins, conjugate);
         }
 
         // Update the region start and peak for the next iteration
