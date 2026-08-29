@@ -72,16 +72,16 @@ static int PolyFreqWarpPeak(const float* magnitudes, int numBins, int start)
 
 // Interpolate a peak position using a parabolic fit to the logarithm of the magnitudes
 
-static float PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
+static double PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 {
-    const float left = std::log(std::max(magnitudes[peak - 1], 1.0e-20f));
-    const float centre = std::log(std::max(magnitudes[peak], 1.0e-20f));
-    const float right = std::log(std::max(magnitudes[peak + 1], 1.0e-20f));
-    const float divisor = left + right - 2.f * centre;
+    const double left = std::log(std::max(static_cast<double>(magnitudes[peak - 1]), 1.0e-20));
+    const double centre = std::log(std::max(static_cast<double>(magnitudes[peak]), 1.0e-20));
+    const double right = std::log(std::max(static_cast<double>(magnitudes[peak + 1]), 1.0e-20));
+    const double divisor = left + right - 2.0 * centre;
    
-    if (divisor == 0.f)
-        return static_cast<float>(peak);
-    return static_cast<float>(peak) + 0.5f * (left - right) / divisor;
+    if (divisor == 0.0)
+        return static_cast<double>(peak);
+    return static_cast<double>(peak) + 0.5 * (left - right) / divisor;
 }
 
 // Paste a single bin into the output array at a fractional position,
@@ -121,16 +121,17 @@ static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* outpu
  
     // Update the phase arrays for the next iteration
     
+
     phaseReal[bin] = rotateReal;
     phaseImag[bin] = rotateImag;
 }
 
 // Calculate the warped frequency position for a given peak position 
 
-static inline float PolyFreqWarpPolynomial(float peak, const float* p, float binShift, int numBins)
+static inline double PolyFreqWarpPolynomial(double peak, const float* p, double binShift, int numBins)
 {
-    const float pNorm = peak / static_cast<float>(numBins - 1);
-    const float polynomial = p[4] + 10000.f * pNorm * (p[3] + pNorm * (p[2] + pNorm * (p[1] + pNorm * p[0])));
+    const double pNorm = peak / static_cast<double>(numBins - 1);
+    const double polynomial = p[4] + 10000.0 * pNorm * (p[3] + pNorm * (p[2] + pNorm * (p[1] + pNorm * p[0])));
     
     return peak * polynomial + binShift;
 }
@@ -140,8 +141,8 @@ static inline float PolyFreqWarpPolynomial(float peak, const float* p, float bin
 static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float* phaseReal, float* phaseImag, 
                                 const float* magnitudes, int numBins, const float* params, bool reflect, float overlap)
 {
-    const float phaseConst = 2.f * static_cast<float>(M_PI) / overlap;
-    const float binShift = params[5] * (numBins - 1);
+    const double phaseConst = 2.0 * M_PI / overlap;
+    const double binShift = params[5] * (numBins - 1);
 
     // Zero the output
 
@@ -179,15 +180,15 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float
 
         // Calculate the shift for this region based on the peak position and the polynomial
 
-        const float peakPosition = PolyFreqWarpPeakPosition(magnitudes, peak);
-        const float peakPolynomial = PolyFreqWarpPolynomial(peakPosition, params, binShift, numBins);
-        const float shift = peakPolynomial - peakPosition;
+        const double peakPosition = PolyFreqWarpPeakPosition(magnitudes, peak);
+        const double peakPolynomial = PolyFreqWarpPolynomial(peakPosition, params, binShift, numBins);
+        const double shift = peakPolynomial - peakPosition;
 
         // Calculate the rotation for this region based on the shift and the previous phase values
 
-        const float phaseAngle = shift * phaseConst;
-        const float tempReal = std::cos(phaseAngle);
-        const float tempImag = std::sin(phaseAngle);
+        const double phaseAngle = shift * phaseConst;
+        const float tempReal = static_cast<float>(std::cos(phaseAngle));
+        const float tempImag = static_cast<float>(std::sin(phaseAngle));
 
         const float rotateReal = tempReal * phaseReal[peak] - tempImag * phaseImag[peak];
         const float rotateImag = tempReal * phaseImag[peak] + tempImag * phaseReal[peak];
