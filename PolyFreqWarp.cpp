@@ -117,7 +117,7 @@ static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* outpu
     
     // Add to the output
 
-    PolyFreqWarpAdd(output, numBins, destination, real, conjugate ? -imag : imag);
+    PolyFreqWarpAdd(output, destination, real, conjugate ? -imag : imag, numBins);
  
     // Update the phase arrays for the next iteration
     
