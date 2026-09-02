@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstring>
 
 InterfaceTable* ft;
@@ -10,14 +11,12 @@ InterfaceTable* ft;
 struct PV_PolyFreqWarp : PV_Unit
 {
     int mNumBins;
-    float* mPhaseReal;
-    float* mPhaseImag;
+    std::complex<float>* mPhase;
 };
 
 static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
 {
-    RTFree(unit->mWorld, unit->mPhaseReal);
-    RTFree(unit->mWorld, unit->mPhaseImag);
+    RTFree(unit->mWorld, unit->mPhase);
 }
 
 // Ensure that the phase arrays are allocated and initialized for the given number of bins
@@ -32,12 +31,11 @@ static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
     // Free any existing phase arrays before allocating new ones
 
     PolyFreqWarpFree(unit);
-    unit->mPhaseReal = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
-    unit->mPhaseImag = static_cast<float*>(RTAlloc(unit->mWorld, numBins * sizeof(float)));
+    unit->mPhase = static_cast<std::complex<float>*>(RTAlloc(unit->mWorld, numBins * sizeof(std::complex<float>)));
 
     // If allocation failed, free any allocated memory and return false
 
-    if (!unit->mPhaseReal || !unit->mPhaseImag)
+    if (!unit->mPhase)
     {
         PolyFreqWarpFree(unit);
         unit->mNumBins = 0;
@@ -47,10 +45,7 @@ static bool PolyFreqWarpEnsureState(PV_PolyFreqWarp* unit, int numBins)
     // Initialize the phase arrays to represent no rotation (real=1, imag=0)
 
     for (int i = 0; i < numBins; ++i)
-    {
-        unit->mPhaseReal[i] = 1.f;
-        unit->mPhaseImag[i] = 0.f;
-    }
+        unit->mPhase[i] = std::complex<float>(1.f, 0.f);
     unit->mNumBins = numBins;
     
     return true;
@@ -87,44 +82,66 @@ static double PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 // Paste a single bin into the output array at a fractional position,
 // Distribute the value between the two nearest bins based on the fractional part of the position.
 
-static inline void PolyFreqWarpAdd(SCComplex* output, float position, float real, float imag, int numBins)
+class enum paste_type { add, clip, dc, nyquist };
+
+static inline void PolyFreqWarpAdd(SCComplex* output, int idx, float fraction, std::complex<float> value)
 {
-    if (position < 0.f || position > static_cast<float>(numBins - 1))
-        return;
-    const int lower = static_cast<int>(std::floor(position));
-    const float fraction = position - static_cast<float>(lower);
-    output[lower].real += real * (1.f - fraction);
-    output[lower].imag += imag * (1.f - fraction);
-    if (lower + 1 < numBins)
-    {
-        output[lower + 1].real += real * fraction;
-        output[lower + 1].imag += imag * fraction;
-    }
+    output[idx].real += value.real * (1.f - fraction);
+    output[idx].imag += value.imag * (1.f - fraction);
+    output[idx + 1].real += value.real * fraction;
+    output[idx + 1].imag += value.imag * fraction;
+}
+
+static inline void PolyFreqWarpAddClip(SCComplex* output, int idx, float fraction, std::complex<float> value)
+{
+    output[idx].real += value.real * (1.f - fraction);
+    output[idx].imag += value.imag * (1.f - fraction);
+}
+
+static inline void PolyFreqWarpAddDCEnd(SCComplex* output, int /*idx*/, float fraction, std::complex<float> value)
+{
+    output[0].real += (value * (1.f - fraction)).abs();
+    output[1].real += value.real * fraction;
+    output[i].imag += value.imag * fraction;
+}
+
+static inline void PolyFreqWarpAddNyquistEnd(SCComplex* output, int idx, float fraction, std::complex<float> value)
+{
+    output[idx].real += value.real * (1.f - fraction);
+    output[idx].imag += value.imag * (1.f - fraction);
+    output[idx + 1].real += (value * fraction).abs();
 }
 
 // Shift and paste a single bin
 
-static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* output, int bin, float destination, 
-                                        float rotateReal, float rotateImag, float* phaseReal, float* phaseImag, 
-                                        int numBins, bool conjugate)
+template <paste_type type = paste_type::add>
+static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* output, int bin, int idx, float fraction,
+                                        std::complex<float> rotate, std::complex<float>* phase, bool conjugate)
 {
     // Rotate the input bin by the given complex value
 
-    const float sourceReal = input[bin].real;
-    const float sourceImag = input[bin].imag;
-    const float real = sourceReal * rotateReal - sourceImag * rotateImag;
-    const float imag = sourceReal * rotateImag + sourceImag * rotateReal;
-    
-    // Add to the output
+    const std::complex<float> source = std::complex<float>(input[bin].real, input[bin].imag);
+    std::complex<float> value = source * rotate;
+    value = conjugate ? value.conj() : value;
 
-    PolyFreqWarpAdd(output, destination, real, conjugate ? -imag : imag, numBins);
- 
+    // Add to the output (use the correct mode)
+    
+    switch (type)
+    {
+        case phase_type::add:       PolyFreqWarpAdd(output, idx, fraction, value);              break;
+        case phase_type::clip:      PolyFreqWarpAddClip(output, idx, fraction, value);          break;
+        case phase_type::dc:        PolyFreqWarpAddDCEnd(output, idx, fraction, value);         break;
+        case phase_type::nyquist:   PolyFreqWarpAddNyquistEnd(output, idx, fraction, value);    break;
+    } 
+               
     // Update the phase arrays for the next iteration
-    
 
-    phaseReal[bin] = rotateReal;
-    phaseImag[bin] = rotateImag;
+    phase[bin] = rotate;
 }
+
+using PolyFreqWarpShiftBinClip = PolyFreqWarpShiftBin<phase_type::clip>;
+using PolyFreqWarpShiftBinDC = PolyFreqWarpShiftBin<phase_type::DC>;
+using PolyFreqWarpShiftBinNyquist = PolyFreqWarpShiftBin<phase_type::nyquist>;
 
 // Calculate the warped frequency position for a given peak position 
 
@@ -138,7 +155,7 @@ static inline double PolyFreqWarpPolynomial(double peak, const float* p, double 
 
 // Process the input and write to the output
 
-static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float* phaseReal, float* phaseImag, 
+static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::complex<float>* phase, 
                                 const float* magnitudes, int numBins, const float* params, bool reflect, float overlap)
 {
     const double phaseConst = 2.0 * M_PI / overlap;
@@ -193,36 +210,74 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, float
         const float rotateReal = tempReal * phaseReal[peak] - tempImag * phaseImag[peak];
         const float rotateImag = tempReal * phaseImag[peak] + tempImag * phaseReal[peak];
 
-        // Shift this region and paste the the output
+        // Calculate the first bin destination
+        
+        float destination = static_cast<float>(regionStart) + shift;
+        bool conjugate = false;
 
-        for (int i = regionStart; i < regionEnd; ++i)
+        if (reflect)
         {
-            float destination = static_cast<float>(i) + shift;
-            bool conjugate = false;
-
-            if (reflect)
+            if (destination < 0.f)
             {
-                if (destination < 0.f)
+                destination = -destination;
+                conjugate = !conjugate;
+            }
+            if (destination > static_cast<float>(numBins - 1))
+            {
+                float twoN = 2.f * static_cast<float>(numBins - 1);
+                float wrapped = std::fmod(destination, twoN);
+                if (wrapped > static_cast<float>(numBins - 1))
                 {
-                    destination = -destination;
+                    wrapped = twoN - wrapped;
                     conjugate = !conjugate;
                 }
-                if (destination > static_cast<float>(numBins - 1))
-                {
-                    float twoN = 2.f * static_cast<float>(numBins - 1);
-                    float wrapped = std::fmod(destination, twoN);
-                    if (wrapped > static_cast<float>(numBins - 1))
-                    {
-                        wrapped = twoN - wrapped;
-                        conjugate = !conjugate;
-                    }
-                    destination = wrapped;
-                }
+                destination = wrapped;
+            }
+        }
+
+        int idx = static_cast<int>(std::floor(destination));
+        float fraction = destination - static_cast<float>(idx);
+
+        // Shift this region and paste the the output in one or two passes depending on the mode
+
+        for (int i = regionStart; i < regionEnd; )
+        {
+            if (conjugate)
+            {
+                if (idx == numBins - 1)
+                    PolyFreqWarpShiftBinClip(input, output, i++, idx--, fraction, rotateReal, rotateImag, phase, conjugate);
+                
+                if (idx == numBins - 2)
+                    PolyFreqWarpShiftBinNyquistEnd(input, output, i++, idx--, fraction, rotateReal, rotateImag, phase, conjugate);
+                
+                for ( ; i < regionEnd; i++, idx--)
+                    PolyFreqWarpShiftBin(input, output, i, idx, fraction, rotateReal, rotateImag, phase, conjugate);
+
+                if (idx == 0 && i < regionEnd)
+                    PolyFreqWarpShiftBinDC(input, output, i++, idx, fraction, rotateReal, rotateImag, phase, conjugate);
+
+                if (idx == -1 && i < regionEnd)
+                    PolyFreqWarpShiftBinClip(input, output, i++, idx, fraction, rotateReal, rotateImag, phase, conjugate);
+            }
+            else
+            {
+                 if (idx == -1)
+                    PolyFreqWarpShiftBinClip(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+                
+                  if (idx == 0)
+                    PolyFreqWarpShiftBinNyquistEnd(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                
+                for ( ; i < regionEnd; i++, idx++)
+                    PolyFreqWarpShiftBin(input, output, i, idx, fraction, rotate, phase, conjugate);
+
+                if (idx == numBins - 2 && i < regionEnd)
+                    PolyFreqWarpShiftBinClip(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+
+                if (idx == numBins - 1 && i < regionEnd)
+                    PolyFreqWarpShiftBinClip(input, output, i++, idx++, fraction, rotate, phase, conjugate);
             }
 
-            // Shift and paste a single bin
-
-            PolyFreqWarpShiftBin(input, output, i, destination, rotateReal, rotateImag ,phaseReal, phaseImag, numBins, conjugate);
+            conjugate = !conjugate;
         }
 
         // Update the region start and peak for the next iteration
@@ -370,8 +425,7 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
 
     // Process
     
-    PolyFreqWarpProcess(input, output, unit->mPhaseReal, unit->mPhaseImag, 
-                        magnitudes, numBins, params, reflect, overlap);
+    PolyFreqWarpProcess(input, output, unit->mPhase, unit->mPhase, magnitudes, numBins, params, reflect, overlap);
 
     // Copy output back to the main complex buffer
 
