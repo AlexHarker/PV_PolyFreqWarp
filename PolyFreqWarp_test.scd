@@ -35,7 +35,7 @@ s.waitForBoot {
                 curve3,
                 scale,
                 shift,
-                1,
+                2,
 				PV_Add(leftFFT, rightFFT) // Use linked detection
             );
 
