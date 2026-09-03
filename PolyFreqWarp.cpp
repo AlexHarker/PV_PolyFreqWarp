@@ -14,6 +14,8 @@ struct PV_PolyFreqWarp : PV_Unit
     std::complex<float>* mPhase;
 };
 
+// Define the reflection modes for handling negative frequencies and those above the Nyquist frequency. 
+
 enum class ReflectMode { None, Negative, Reflect };
 
 static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
@@ -166,7 +168,7 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
         output[i].real = 0.f;
         output[i].imag = 0.f;
     }
-
+    
     // Find the first peak
 
     int regionStart = 0;
@@ -267,14 +269,14 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
 
                 // Paste bins in the forward direction, handling edge cases for DC and Nyquist bins
 
-                 if (reflect != ReflectMode::Reflect && idx == -1)
+                if (reflect == ReflectMode::None && idx == -1)
                     PolyFreqWarpDoBin<PasteMode::Clip>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
                 
-                  if (idx == 0 && i < regionEnd)
-                    PolyFreqWarpDoBin<PasteMode::DC>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
-                
-                for ( ; i < loop; i++, idx++)
-                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i, idx, fraction, rotate, phase, conjugate);
+                if (idx == 0 && i < regionEnd)
+                    PolyFreqWarpDoBin<PasteMode::DC>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+            
+                for ( ; i < loop; )
+                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
 
                 if (idx == numBins - 2 && i < regionEnd)
                     PolyFreqWarpDoBin<PasteMode::Nyquist>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
@@ -299,8 +301,8 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
                 if (idx == numBins - 2 && i < regionEnd)
                     PolyFreqWarpDoBin<PasteMode::Nyquist>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
                 
-                for ( ; i < loop; i++, idx--)
-                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i, idx, fraction, rotate, phase, conjugate);
+                for ( ; i < loop; )
+                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
 
                 if (idx == 0 && i < regionEnd)
                     PolyFreqWarpDoBin<PasteMode::DC>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
