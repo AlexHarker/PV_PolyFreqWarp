@@ -14,7 +14,7 @@ struct PV_PolyFreqWarp : PV_Unit
     std::complex<float>* mPhase;
 };
 
-enum class reflect_type { none, negative, reflect };
+enum class ReflectMode { None, Negative, Reflect };
 
 static void PolyFreqWarpFree(PV_PolyFreqWarp* unit)
 {
@@ -84,9 +84,9 @@ static double PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 // Paste a single bin into the output array at a fractional position,
 // Distribute the value between the two nearest bins based on the fractional part of the position.
 
-enum class paste_type { add, clip, dc, nyquist };
+enum class PasteMode { Add, Clip, DC, Nyquist };
 
-static inline void PolyFreqWarpAdd(SCComplex* output, int idx, float fraction, std::complex<float> value)
+static inline void PolyFreqWarpAddNorm(SCComplex* output, int idx, float fraction, std::complex<float> value)
 {
     output[idx].real += value.real() * (1.f - fraction);
     output[idx].imag += value.imag() * (1.f - fraction);
@@ -100,14 +100,14 @@ static inline void PolyFreqWarpAddClip(SCComplex* output, int idx, float fractio
     output[idx].imag += value.imag() * (1.f - fraction);
 }
 
-static inline void PolyFreqWarpAddDCEnd(SCComplex* output, int /*idx*/, float fraction, std::complex<float> value)
+static inline void PolyFreqWarpAddDC(SCComplex* output, int /*idx*/, float fraction, std::complex<float> value)
 {
     output[0].real += std::abs(value * (1.f - fraction));
     output[1].real += value.real() * fraction;
     output[1].imag += value.imag() * fraction;
 }
 
-static inline void PolyFreqWarpAddNyquistEnd(SCComplex* output, int idx, float fraction, std::complex<float> value)
+static inline void PolyFreqWarpAddNyquist(SCComplex* output, int idx, float fraction, std::complex<float> value)
 {
     output[idx].real += value.real() * (1.f - fraction);
     output[idx].imag += value.imag() * (1.f - fraction);
@@ -116,9 +116,9 @@ static inline void PolyFreqWarpAddNyquistEnd(SCComplex* output, int idx, float f
 
 // Shift and paste a single bin
 
-template <paste_type type = paste_type::add>
-static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* output, int bin, int idx, float fraction,
-                                        std::complex<float> rotate, std::complex<float>* phase, bool conjugate)
+template <PasteMode mode>
+static inline void PolyFreqWarpDoBin(const SCComplex* input, SCComplex* output, int bin, int idx, float fraction,
+                                std::complex<float> rotate, std::complex<float>* phase, bool conjugate)
 {
     // Rotate the input bin by the given complex value
 
@@ -128,12 +128,12 @@ static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* outpu
 
     // Add to the output (use the correct mode)
     
-    switch (type)
+    switch (mode)
     {
-        case paste_type::add:       PolyFreqWarpAdd(output, idx, fraction, value);              break;
-        case paste_type::clip:      PolyFreqWarpAddClip(output, idx, fraction, value);          break;
-        case paste_type::dc:        PolyFreqWarpAddDCEnd(output, idx, fraction, value);         break;
-        case paste_type::nyquist:   PolyFreqWarpAddNyquistEnd(output, idx, fraction, value);    break;
+        case PasteMode::Add:        PolyFreqWarpAddNorm(output, idx, fraction, value);          break;
+        case PasteMode::Clip:       PolyFreqWarpAddClip(output, idx, fraction, value);          break;
+        case PasteMode::DC:         PolyFreqWarpAddDC(output, idx, fraction, value);            break;
+        case PasteMode::Nyquist:    PolyFreqWarpAddNyquist(output, idx, fraction, value);       break;
     } 
                
     // Update the phase arrays for the next iteration
@@ -154,7 +154,7 @@ static inline double PolyFreqWarpPolynomial(double peak, const float* p, double 
 // Process the input and write to the output
 
 static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::complex<float>* phase, const float* magnitudes,
-                                int numBins, const float* params, reflect_type reflect, float overlap)
+                                int numBins, const float* params, ReflectMode reflect, float overlap)
 {
     const double phaseConst = 2.0 * M_PI / overlap;
     const double binShift = params[5] * (numBins - 1);
@@ -209,17 +209,13 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
         // Calculate the first bin destination
         
         bool conjugate = false;
-
-        int regionPasteStart = regionStart;
-        int regionPasteEnd = regionEnd;
-
-        float destination = static_cast<float>(regionPasteStart) + shift;
+        float destination = static_cast<float>(regionStart) + shift;
 
         // Handle negative frequencies
 
-        if (regionPasteStart < -shift)
+        if (regionStart < -shift)
         {
-            if (reflect != reflect_type::none)
+            if (reflect != ReflectMode::None)
             {
                 destination = -destination;
                 conjugate = !conjugate;
@@ -228,8 +224,8 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
             {
                 // N.B. we allow an extra bin so that we paste the DC amount
 
-                regionPasteStart = static_cast<int>(std::ceil(-shift)) + 1;
-                destination = static_cast<float>(regionPasteStart) + shift;
+                regionStart = static_cast<int>(std::ceil(-shift)) + 1;
+                destination = static_cast<float>(regionStart) + shift;
             }
         }
 
@@ -237,7 +233,7 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
 
         if (destination > static_cast<float>(numBins - 1))
         {
-           if (reflect != reflect_type::none)
+           if (reflect != ReflectMode::None)
             {
                 float twoN = 2.f * static_cast<float>(numBins - 1);
                 float wrapped = std::fmod(destination, twoN);
@@ -261,49 +257,59 @@ static void PolyFreqWarpProcess(const SCComplex* input, SCComplex* output, std::
 
         // Shift this region and paste the the output in one or two passes depending on the mode
 
-        for (int i = regionPasteStart; i < regionPasteEnd; )
+        for (int i = regionStart; i < regionEnd; )
         {
             if (!conjugate)
             {
-                int loop = std::min(regionPasteEnd - i, idx + 1);
+                // Set the loop limit for pasting bins in the reverse direction, taking into account the reflection mode
+
+                int loop = std::min(regionEnd, regionStart + (numBins - (reflect != ReflectMode::Reflect ? 1 : 2)) - idx);
 
                 // Paste bins in the forward direction, handling edge cases for DC and Nyquist bins
 
-                 if (reflect != reflect_type::reflect && idx == -1)
-                    PolyFreqWarpShiftBin<paste_type::clip>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+                 if (reflect != ReflectMode::Reflect && idx == -1)
+                    PolyFreqWarpDoBin<PasteMode::Clip>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
                 
-                  if (idx == 0 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::dc>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                  if (idx == 0 && i < regionEnd)
+                    PolyFreqWarpDoBin<PasteMode::DC>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
                 
                 for ( ; i < loop; i++, idx++)
-                    PolyFreqWarpShiftBin(input, output, i, idx, fraction, rotate, phase, conjugate);
+                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i, idx, fraction, rotate, phase, conjugate);
 
-                if (idx == numBins - 2 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::nyquist>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+                if (idx == numBins - 2 && i < regionEnd)
+                    PolyFreqWarpDoBin<PasteMode::Nyquist>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
 
-                if (reflect != reflect_type::reflect && idx == numBins - 1 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::clip>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+                if (reflect != ReflectMode::Reflect && idx == numBins - 1 && i < regionEnd)
+                {
+                    PolyFreqWarpDoBin<PasteMode::Clip>(input, output, i++, idx++, fraction, rotate, phase, conjugate);
+                    break;
+                }
             }
             else
             {
-                int loop = std::min(regionPasteEnd - i, idx + 1);
+                // Set the loop limit for pasting bins in the reverse direction, taking into account the reflection mode
+
+                int loop = std::min(regionEnd, regionStart + idx + (reflect == ReflectMode::None ? 1 : 2));
                 
                 // Paste bins in the reverse direction, handling edge cases for DC and Nyquist bins
 
-                if (reflect != reflect_type::reflect && idx == numBins - 1)
-                    PolyFreqWarpShiftBin<paste_type::clip>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                if (reflect != ReflectMode::Reflect && idx == numBins - 1)
+                    PolyFreqWarpDoBin<PasteMode::Clip>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
                 
-                if (idx == numBins - 2 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::nyquist>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                if (idx == numBins - 2 && i < regionEnd)
+                    PolyFreqWarpDoBin<PasteMode::Nyquist>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
                 
                 for ( ; i < loop; i++, idx--)
-                    PolyFreqWarpShiftBin(input, output, i, idx, fraction, rotate, phase, conjugate);
+                    PolyFreqWarpDoBin<PasteMode::Add>(input, output, i, idx, fraction, rotate, phase, conjugate);
 
-                if (idx == 0 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::dc>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                if (idx == 0 && i < regionEnd)
+                    PolyFreqWarpDoBin<PasteMode::DC>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
 
-                if (reflect == reflect_type::none && idx == -1 && i < regionPasteEnd)
-                    PolyFreqWarpShiftBin<paste_type::clip>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                if (reflect == ReflectMode::None && idx == -1 && i < regionEnd)
+                {
+                    PolyFreqWarpDoBin<PasteMode::Clip>(input, output, i++, idx--, fraction, rotate, phase, conjugate);
+                    break;
+                }
             }
 
             conjugate = !conjugate;
@@ -388,10 +394,12 @@ static void PolyFreqWarpNext(PV_PolyFreqWarp* unit, int)
     params[4] = ZIN0(5);
     params[5] = ZIN0(6);
 
-    const int reflect = ZIN0(7) != 0.f;
+    const float freflect = ZIN0(7);
     const float fdetector = ZIN0(8);
     const float foverlap = ZIN0(9);
     const float overlap = foverlap > 0.f ? foverlap : 4.f;
+
+    const ReflectMode reflect = freflect == 0.f ? ReflectMode::None : freflect == 2.f ? ReflectMode::Reflect : ReflectMode::Negative;
 
     SndBuf* detBuf = buf;
 
