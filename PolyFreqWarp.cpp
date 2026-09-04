@@ -89,12 +89,18 @@ static double PolyFreqWarpPeakPosition(const float* magnitudes, int peak)
 
 static inline void PolyFreqWarpAdd(SCComplex* output, float position, float real, float imag, int numBins)
 {
-    if (position < 0.f || position > static_cast<float>(numBins - 1))
+    if (position < -1.f || position > static_cast<float>(numBins - 1))
         return;
+
     const int lower = static_cast<int>(std::floor(position));
     const float fraction = position - static_cast<float>(lower);
-    output[lower].real += real * (1.f - fraction);
-    output[lower].imag += imag * (1.f - fraction);
+
+    if (lower >= 0)
+    {
+        output[lower].real += real * (1.f - fraction);
+        output[lower].imag += imag * (1.f - fraction);
+    }
+
     if (lower + 1 < numBins)
     {
         output[lower + 1].real += real * fraction;
@@ -121,7 +127,6 @@ static inline void PolyFreqWarpShiftBin(const SCComplex* input, SCComplex* outpu
  
     // Update the phase arrays for the next iteration
     
-
     phaseReal[bin] = rotateReal;
     phaseImag[bin] = rotateImag;
 }
